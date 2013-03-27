@@ -1,69 +1,85 @@
-var formidable = require('formidable'),
-util = require('util'),
-log = console.log;
+var formidable = require("formidable"),
+        util = require("util"),
+        fs = require("fs"),
+        log = console.log;
 
-var MIN_PROGRESS_UPDATE_INTERVAL = 2000; //seconds (in ms)
-var REDIS_KEY_TIMEOUT = 60*60; //one hour
+var MIN_PROGRESS_UPDATE_INTERVAL = 2000; //only update the upload progress every 2 seconds
+var REDIS_KEY_TIMEOUT = 5 * 60; //redis keys expire if they aren"t updated in five minutes
 
-function getUploadKey(upload_id){
-  return "upl:"+upload_id;
+//THESE MUST BE ABSOLUTE PATHS
+var UPLOADING_PATH = "/Users/timschreiner/uploads/during"; 
+var UPLOAD_FINISHED_PATH = "/Users/timschreiner/uploads/finished";
+
+
+function getUploadKey(upload_id) {
+    return "upl:" + upload_id;
 }
 
-function now(){
-  return new Date();
+function now() {
+    return new Date();
 }
 
-exports.handleUpload = function (req, res, upload_id, redisClient) {
-  // parse a file upload
-  var form = new formidable.IncomingForm();
+exports.handleUpload = function(req, res, upload_id, redisClient) {
+    // parse a file upload
+    var form = new formidable.IncomingForm();
 
-  //TODO: make this a config setting
-  form.uploadDir = "/Users/albrooksfan/uploads";
+    //TODO: make this a config setting
+    form.uploadDir = UPLOADING_PATH;
 
-  var theFile;
-  form.on('fileBegin', function(name, file) {
-    theFile = file;
-  });
+    var theFile;
+    form.on("fileBegin", function(name, file) {
+        theFile = file;
+        log("processing upload (id=" + upload_id + ") of file [" + theFile.name + "] as " + theFile.path);
+    });
 
-  var progressLastUpdatedAt = now();
+    var progressLastUpdatedAt = now();
 
-  form.on('progress', function(bytesReceived, bytesExpected) {
-    //TODO: if bytesRecieved gets to big, do we abort?
-    var currentTime = now();
-    if(currentTime - progressLastUpdatedAt > MIN_PROGRESS_UPDATE_INTERVAL || bytesReceived == bytesExpected){
-      progressLastUpdatedAt = currentTime;
+    form.on("progress", function(bytesReceived, bytesExpected) {
+        //TODO: if bytesRecieved gets to big, do we abort?
+        var currentTime = now();
+        var enoughTimeHasPassedSinceLastUpdate = currentTime - progressLastUpdatedAt > MIN_PROGRESS_UPDATE_INTERVAL;
+        var uploadFinished = bytesReceived === bytesExpected;
+        
+        if (enoughTimeHasPassedSinceLastUpdate || uploadFinished) {
+            progressLastUpdatedAt = currentTime;
+            var progress = bytesReceived / bytesExpected;
 
-      redisClient.setex(getUploadKey(upload_id), REDIS_KEY_TIMEOUT, bytesReceived / bytesExpected, function(err){
-        if(err){
-          log(now(), "problem setting progress", err, theFile.toJSON());
-        //TODO: anything else we can do here?
+            redisClient.setex(getUploadKey(upload_id), REDIS_KEY_TIMEOUT, progress, function(err) {
+                if (err) {
+                    log(now(), "problem setting progress", err, theFile.toJSON());
+                    //TODO: anything else we can do here?
+                } else {
+                    log("upload (id=" + upload_id + ") progress = " + progress * 100 + "%");
+                }
+            });
         }
-      });
-    }
-  });
+    });
 
-  form.on('end', function() {
-    log(now(), 'end')
-  //move the file into the ffmpeg watch directory and forward the query params to php
-  //    fs.renameSync(oldPath, newPath);
-  //TODO: make sure if this is called once per file or once ever
+    form.on("end", function() {
+        log(now(), "end of upload (id=" + upload_id + ")")
+        
+        //move the file into the ffmpeg watch directory
+        var oldPath = theFile.path;
 
+        var newPath = UPLOAD_FINISHED_PATH + "/" + upload_id;
+        fs.renameSync(oldPath, newPath);
 
-  });
+        //TODO: forward the query params to php
+    });
 
-  form.on('error', function(err) {
-    log(now(), 'error', err, theFile.name, theFile.size, theFile.path);
-  //do nothing, the upload folder should be routinely cleaned out of old files
-  });
+    form.on("error", function(err) {
+        log(now(), "error with upload (id=" + upload_id + ")", err, theFile.name, theFile.size, theFile.path);
+        //do nothing, the upload folder should be routinely cleaned out of old files
+    });
 
-  form.on('aborted', function() {
-    log(now(), 'aborted')
-  //this automatically deletes the file, so do nothing
-  });
+    form.on("aborted", function() {
+        log(now(), "aborted upload (id=" + upload_id + ")");
+        //this automatically deletes the file, so do nothing
+    });
 
-  form.parse(req);
+    form.parse(req);
 }
 
 exports.trackProgress = function(upload_id, redisClient, cb) {
-  redisClient.get(getUploadKey(upload_id), cb);
+    redisClient.get(getUploadKey(upload_id), cb);
 }
