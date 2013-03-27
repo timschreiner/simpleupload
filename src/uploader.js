@@ -1,6 +1,7 @@
 var formidable = require("formidable"),
         util = require("util"),
         fs = require("fs"),
+        redis = require("redis"),
         log = console.log;
 
 var MIN_PROGRESS_UPDATE_INTERVAL = 2000; //only update the upload progress every 2 seconds
@@ -11,6 +12,16 @@ var UPLOADING_PATH = "/Users/timschreiner/uploads/during";
 var UPLOAD_FINISHED_PATH = "/Users/timschreiner/uploads/finished";
 
 
+var REDIS_PORT = "6379";
+var REDIS_HOST = "127.0.0.1";
+var redisClient = redis.createClient(REDIS_PORT, REDIS_HOST); 
+
+redisClient.on("error", function(err) {
+    console.log("Error " + err);
+//TODO: what else should happen? reconnect? crash and restart?
+});
+
+
 function getUploadKey(upload_id) {
     return "upl:" + upload_id;
 }
@@ -19,7 +30,7 @@ function now() {
     return new Date();
 }
 
-exports.handleUpload = function(req, res, upload_id, redisClient, uploadCallback) {
+exports.handleUpload = function(req, res, upload_id, uploadCallback) {
     // parse a file upload
     var form = new formidable.IncomingForm();
 
@@ -56,7 +67,7 @@ exports.handleUpload = function(req, res, upload_id, redisClient, uploadCallback
     });
 
     form.on("end", function() {
-        log(now(), "end of upload (id=" + upload_id + ")")
+        log(now(), "end of upload (id=" + upload_id + ")");
         
         //move the file into the ffmpeg watch directory
         var oldPath = theFile.path;
@@ -82,9 +93,9 @@ exports.handleUpload = function(req, res, upload_id, redisClient, uploadCallback
     });
 
     form.parse(req);
-}
+};
 
-exports.trackProgress = function(upload_id, redisClient, progressCallback) {
+exports.trackProgress = function(upload_id, progressCallback) {
     //get the progress from redis and then call the progressCallback with that value
     redisClient.get(getUploadKey(upload_id), progressCallback);
-}
+};
