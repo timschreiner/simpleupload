@@ -19,17 +19,30 @@ http.createServer(function(req, res) {
     var query = url_parts.query;
     var upload_id = query.upload_id;
 
-    //  //make sure upload_id is included
-    //  if(upload_id == undefined){
-    //    res.writeHead(400, {
-    //      'content-type': 'text/plain'
-    //    });
-    //    res.end("upload_id is a required paramater");
-    //    return;
-    //  }
+    //make sure upload_id is included
+    if (upload_id === undefined) {
+        res.writeHead(400, {
+            'content-type': 'text/plain'
+        });
+        res.end("upload_id is a required paramater");
+        return;
+    }
 
-    if (/^\/upload/.test(req.url) && req.method.toLowerCase() == 'post') {
-        uploader.handleUpload(req, res, upload_id, redisClient);
+    if (/^\/upload/.test(req.url) && req.method.toLowerCase() === 'post') {
+        uploader.handleUpload(req, res, upload_id, redisClient, function(err) {
+            if (err !== null) {
+                //TODO: handle this  
+                res.writeHead(500, {
+                    'content-type': 'text/html'
+                });
+                res.end("problem with upload " + upload_id + " : " + err);
+                return;
+            }
+            res.writeHead(200, {
+                'content-type': 'text/html'
+            });
+            res.end("finished upload " + upload_id);
+        });
 
 
     } else if ((/^\/progress/.test(req.url))) {

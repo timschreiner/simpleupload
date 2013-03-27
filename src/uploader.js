@@ -19,7 +19,7 @@ function now() {
     return new Date();
 }
 
-exports.handleUpload = function(req, res, upload_id, redisClient) {
+exports.handleUpload = function(req, res, upload_id, redisClient, uploadCallback) {
     // parse a file upload
     var form = new formidable.IncomingForm();
 
@@ -65,21 +65,26 @@ exports.handleUpload = function(req, res, upload_id, redisClient) {
         fs.renameSync(oldPath, newPath);
 
         //TODO: forward the query params to php
+        uploadCallback(null);
     });
 
     form.on("error", function(err) {
         log(now(), "error with upload (id=" + upload_id + ")", err, theFile.name, theFile.size, theFile.path);
         //do nothing, the upload folder should be routinely cleaned out of old files
+        uploadCallback(err);
     });
 
     form.on("aborted", function() {
-        log(now(), "aborted upload (id=" + upload_id + ")");
+        var errorMessage = "aborted upload (id=" + upload_id + ")";
+        log(now(), errorMessage);
         //this automatically deletes the file, so do nothing
+        uploadCallback(errorMessage);
     });
 
     form.parse(req);
 }
 
-exports.trackProgress = function(upload_id, redisClient, cb) {
-    redisClient.get(getUploadKey(upload_id), cb);
+exports.trackProgress = function(upload_id, redisClient, progressCallback) {
+    //get the progress from redis and then call the progressCallback with that value
+    redisClient.get(getUploadKey(upload_id), progressCallback);
 }
