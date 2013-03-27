@@ -4,31 +4,41 @@ var formidable = require("formidable"),
         redis = require("redis"),
         log = console.log;
 
-var MIN_PROGRESS_UPDATE_INTERVAL = 2000; //only update the upload progress every 2 seconds
-var REDIS_KEY_TIMEOUT = 5 * 60; //redis keys expire if they aren"t updated in five minutes
 
-//THESE MUST BE ABSOLUTE PATHS
-var UPLOADING_PATH = "/Users/timschreiner/uploads/during"; 
-var UPLOAD_FINISHED_PATH = "/Users/timschreiner/uploads/finished";
+//UTILITY FUNCTIONS
+function expandPath(string) {
+    if (string.substr(0, 1) === '~') {
+        string = process.env.HOME + string.substr(1);
+    }
+    return require('path').resolve(string);
+}
 
-
-var REDIS_PORT = "6379";
-var REDIS_HOST = "127.0.0.1";
-var redisClient = redis.createClient(REDIS_PORT, REDIS_HOST); 
-
-redisClient.on("error", function(err) {
-    console.log("Error " + err);
-//TODO: what else should happen? reconnect? crash and restart?
-});
-
-
-function getUploadKey(upload_id) {
+function redisUploadKey(upload_id) {
     return "upl:" + upload_id;
 }
 
 function now() {
     return new Date();
 }
+
+
+//CONSTANTS
+var MIN_PROGRESS_UPDATE_INTERVAL = 2000; //only update the upload progress every 2 seconds
+var REDIS_KEY_TIMEOUT = 5 * 60; //redis keys expire if they aren"t updated in five minutes
+
+var UPLOADING_PATH = expandPath("~/uploads/during");
+var UPLOAD_FINISHED_PATH = expandPath("~/uploads/finished");
+
+var REDIS_PORT = "6379";
+var REDIS_HOST = "127.0.0.1";
+
+//connect to redis
+var redisClient = redis.createClient(REDIS_PORT, REDIS_HOST);
+
+redisClient.on("error", function(err) {
+    //TODO: what else should happen? reconnect? crash and restart?
+    console.log("Error " + err);
+});
 
 exports.handleUpload = function(req, res, upload_id, uploadCallback) {
     // parse a file upload
@@ -50,12 +60,12 @@ exports.handleUpload = function(req, res, upload_id, uploadCallback) {
         var currentTime = now();
         var enoughTimeHasPassedSinceLastUpdate = currentTime - progressLastUpdatedAt > MIN_PROGRESS_UPDATE_INTERVAL;
         var uploadFinished = bytesReceived === bytesExpected;
-        
+
         if (enoughTimeHasPassedSinceLastUpdate || uploadFinished) {
             progressLastUpdatedAt = currentTime;
             var progress = bytesReceived / bytesExpected;
 
-            redisClient.setex(getUploadKey(upload_id), REDIS_KEY_TIMEOUT, progress, function(err) {
+            redisClient.setex(redisUploadKey(upload_id), REDIS_KEY_TIMEOUT, progress, function(err) {
                 if (err) {
                     log(now(), "problem setting progress", err, theFile.toJSON());
                     //TODO: anything else we can do here?
@@ -68,7 +78,7 @@ exports.handleUpload = function(req, res, upload_id, uploadCallback) {
 
     form.on("end", function() {
         log(now(), "end of upload (id=" + upload_id + ")");
-        
+
         //move the file into the ffmpeg watch directory
         var oldPath = theFile.path;
 
@@ -97,5 +107,5 @@ exports.handleUpload = function(req, res, upload_id, uploadCallback) {
 
 exports.trackProgress = function(upload_id, progressCallback) {
     //get the progress from redis and then call the progressCallback with that value
-    redisClient.get(getUploadKey(upload_id), progressCallback);
+    redisClient.get(redisUploadKey(upload_id), progressCallback);
 };
